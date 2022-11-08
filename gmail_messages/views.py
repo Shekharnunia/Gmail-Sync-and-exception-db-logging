@@ -2,6 +2,8 @@ from django.shortcuts import render
 import os.path
 from django.http import Http404
 from django.core.exceptions import BadRequest
+from django.core.exceptions import PermissionDenied
+from django.http import HttpResponseForbidden
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -33,9 +35,10 @@ MAIL_SCOPES = 'https://mail.google.com/'
 # Create your views here.
 def messages_list_test(request):
     print(1)
-    import djangos
-    # raise Http404
-    return render(request, "message-list.html", {})
+    raise Http404
+    # raise BadRequest
+    # import djangos
+    return render(request, "", {})
 
 
 def create_message(sender, to, message_id, thread_id, subject, message_text):
@@ -54,7 +57,7 @@ def create_message(sender, to, message_id, thread_id, subject, message_text):
 
 class GmailAuthMixin:
 
-    def auth(self):
+    def auth(self, auth_type=None):
         creds = None
         # The file token.json stores the user's access and refresh tokens, and is
         # created automatically when the authorization flow completes for the first
@@ -64,8 +67,12 @@ class GmailAuthMixin:
         credentials_file_path = os.path.join(module_dir, 'credentials.json')
         
         # print(os.path.exists(token_file_path))
+        scope = SCOPES
+        if auth_type == "support":
+            scope = MAIL_SCOPES
+        print(scope)
         if os.path.exists(token_file_path):
-            creds = Credentials.from_authorized_user_file(token_file_path, SCOPES)
+            creds = Credentials.from_authorized_user_file(token_file_path, scope)
         # print(creds)
         
         # If there are no (valid) credentials available, let the user log in.
@@ -74,7 +81,7 @@ class GmailAuthMixin:
                 creds.refresh(Request())
             else:
                 flow = InstalledAppFlow.from_client_secrets_file(
-                    credentials_file_path, SCOPES)
+                    credentials_file_path, scope)
                 creds = flow.run_local_server(port=0)
             # Save the credentials for the next run
             with open(token_file_path, 'w') as token:
@@ -100,11 +107,13 @@ class SyncMail(GmailAuthMixin, APIView):
             # get last message id
             message = Mail.objects.order_by("id").last()
             message_id = message.message_id if message else None
+            if not message_id:
+                messages.reverse()
             for message in messages:
-                if not message_id == str(message["id"]):
+                if message_id != str(message["id"]):
                     message_body = service.users().messages().get(userId='me', id=message["id"], format="minimal").execute()
                     messages_body.append(message_body)
-                    Mail.objects.create(message_id=message["id"], thread_id=message["threadId"], snippet=message_body["snippet"])
+                    Mail.objects.update_or_create(message_id=message["id"], thread_id=message["threadId"], snippet=message_body["snippet"])
                 else:
                     break
         except HttpError as error:
@@ -116,12 +125,13 @@ class SyncMail(GmailAuthMixin, APIView):
 class SupportMail(GmailAuthMixin, APIView):
 
     def get(self, request, format=None):
-        creds = self.auth()
+        creds = self.auth(auth_type="support")
         try:
             # Call the Gmail API
             service = build('gmail', 'v1', credentials=creds)
             results = service.users().messages().list(userId='me', q="Please Help Me!").execute()
             messages = results.get('messages', [])
+            # print(messages)
 
             message = create_message('shekharnuniagaming2@gmail.com','shekharnunia@gmail.com', 
     messages[0]["id"], messages[0]["threadId"], "Hi", "Hello There, We will get back to you on this.")
